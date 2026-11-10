@@ -1,0 +1,152 @@
+# Windows x64：构建 junimo-mcp（含 smooth_move 补丁）+ tools/list 新旧对比
+#
+# 触发：PR（只看相关路径）/ 手动。不监听 push，避免污染 main 的日常流水。
+# 权限：只读。不写仓库、不发 release。
+#
+# 设计要点（均有仓库内证据）：
+# - 工具链与上游 CI 完全一致：windows-latest + ocaml/setup-ocaml@v3 + OCaml 5.5
+#   （.github/workflows/ci.yml:47、69-80）
+# - 依赖只有 yojson 与 unix（lib/dune:1-3）；这里显式装 dune + yojson，
+#   并断言 dune >= 3.10（dune-project:1 声明 (lang dune 3.10)）
+# - dune 在所有平台都输出 _build/default/bin/main.exe（ci.yml:85 注释、test/mock_smoke.py:33）
+# - initialize / tools/list 是纯本地逻辑（lib/mcp.ml:10-26、65；lib/intents.ml:2969-2978），
+#   不需要游戏、不需要 JunimoBridge、不需要 mock
+name: build-windows-verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: "对比基线（tag 或 commit），默认 v3.3.1"
+        required: false
+        default: "v3.3.1"
+  pull_request:
+    paths:
+      - "lib/**"
+      - "bin/**"
+      - "dune-project"
+      - "**/dune"
+      - "test/tools_list_check.py"
+      - "test/mock_smoke.py"
+      - ".github/workflows/build-windows-verify.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OCAML_VERSION: "5.5"
+  BASELINE_REF: ${{ github.event.inputs.baseline_ref || 'v3.3.1' }}
+
+jobs:
+  windows:
+    name: Windows x64 构建 + tools/list 校验
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出源码（对比基线要拿 tag，必须全历史）
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 装配 OCaml（opam / setup-ocaml，版本 pin）
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ env.OCAML_VERSION }}
+
+      - name: 安装依赖（dune + yojson）
+        run: opam install --yes dune yojson
+
+      - name: 工具链自检（OCaml 5.5 / dune >= 3.10）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ocaml = (opam exec -- ocaml -version).Trim()
+          $dune  = (opam exec -- dune --version).Trim()
+          Write-Host "ocaml = $ocaml"
+          Write-Host "dune  = $dune"
+          if ($ocaml -notmatch '5\.5') { throw "OCaml 版本不是 5.5：$ocaml" }
+          if ($dune -notmatch '^(\d+)\.(\d+)') { throw "无法解析 dune 版本：$dune" }
+          $major = [int]$Matches[1]
+          $minor = [int]$Matches[2]
+          if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 10)) {
+            throw "dune 版本 < 3.10：$dune"
+          }
+
+      - name: 构建（改动后）
+        run: opam exec -- dune build
+
+      - name: 单元测试（既有测试，防回归）
+        run: opam exec -- dune runtest
+
+      - name: 导出基线源码（tag -> baseline/）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ref = $env:BASELINE_REF
+          $resolved = $null
+          foreach ($c in @($ref, "v$ref", $ref.TrimStart('v'))) {
+            git rev-parse --verify "${c}^{commit}" 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { $resolved = $c; break }
+          }
+          if (-not $resolved) {
+            throw "找不到基线 ref：$ref（可用 workflow_dispatch 的 baseline_ref 指定 commit）"
+          }
+          "BASELINE_RESOLVED=$resolved" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          git archive --format=zip --output baseline.zip $resolved
+          if ($LASTEXITCODE -ne 0) { throw "git archive 失败：$resolved" }
+          Expand-Archive baseline.zip -DestinationPath baseline -Force
+          if (-not (Test-Path baseline/dune-project)) { throw "基线目录不完整：缺 baseline/dune-project" }
+          Write-Host "baseline = $resolved"
+
+      - name: 构建基线（同一套编译器与依赖）
+        working-directory: baseline
+        run: opam exec -- dune build
+
+      - name: 转储新旧 tools/list（各自真的跑一遍 initialize + tools/list）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path _build/default/bin/main.exe)) { throw "改动后产物不存在" }
+          if (-not (Test-Path baseline/_build/default/bin/main.exe)) { throw "基线产物不存在" }
+          python test/tools_list_check.py dump --exe _build/default/bin/main.exe --out tools-new.json
+          if ($LASTEXITCODE -ne 0) { throw "转储新版 tools/list 失败" }
+          python test/tools_list_check.py dump --exe baseline/_build/default/bin/main.exe --out tools-old.json
+          if ($LASTEXITCODE -ne 0) { throw "转储基线 tools/list 失败" }
+
+      - name: 对比（42 项 / 仅新增 smooth_move / 旧 41 项逐字一致）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python test/tools_list_check.py compare --old tools-old.json --new tools-new.json --expect-count 42 --expect-old-count 41 --expect-added smooth_move
+          if ($LASTEXITCODE -ne 0) { throw "tools/list 对比失败" }
+
+      - name: 产物 + SHA256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item _build/default/bin/main.exe dist/junimo-mcp-windows-x86_64.exe
+          $h = (Get-FileHash dist/junimo-mcp-windows-x86_64.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  junimo-mcp-windows-x86_64.exe" |
+            Out-File -Encoding ascii dist/junimo-mcp-windows-x86_64.exe.sha256
+          $size = (Get-Item dist/junimo-mcp-windows-x86_64.exe).Length
+          Write-Host "SHA256 = $h"
+          Write-Host "size   = $size bytes"
+          "### junimo-mcp-windows-x86_64.exe`n`n- SHA256: $h`n- size: $size bytes" |
+            Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 上传 artifact（exe + sha256 + 新旧 tools/list）
+        uses: actions/upload-artifact@v7
+        with:
+          name: junimo-mcp-windows-x86_64
+          path: |
+            dist/junimo-mcp-windows-x86_64.exe
+            dist/junimo-mcp-windows-x86_64.exe.sha256
+            tools-old.json
+            tools-new.json
+          retention-days: 14
+          if-no-files-found: error

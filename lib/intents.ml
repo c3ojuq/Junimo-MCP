@@ -813,6 +813,78 @@ let tool_go_to =
                  x y px py st.loc_name)));
   }
 
+let tool_smooth_move =
+  {
+    name = "smooth_move";
+    description =
+      "以**原生行走**方式走到指定格子：逐格注入方向键，保留走路 / 转向 / 停步动画\
+       （角色只会「平移」、没有走路动画时改用它；速度接近正常步行，通常比 go_to 慢）。\
+       什么时候用：需要观感自然、录制演示，或想确认「人真的在走」而不是瞬移时。\
+       注意：寻路复用 go_to 同款 BFS；被障碍挡住 / 菜单对话事件打开 / 超时都会**立即停止**\
+       并回报实际位置与原因；目标格站不住时会走到最近的可站格（回执会说明）；\
+       这是阻塞调用，返回时人已经停稳。";
+    schema =
+      obj_schema
+        [
+          ("x", p_int "目标格 x 坐标（必填，格子坐标，不是像素）");
+          ("y", p_int "目标格 y 坐标（必填，格子坐标，不是像素）");
+          ( "timeoutMs",
+            p_int ~minimum:1000 ~maximum:180000 ~default:30000
+              "总超时（毫秒），默认 30000；到点会停下并回报实际位置" );
+          ( "stallMs",
+            p_int ~minimum:200 ~maximum:30000 ~default:2500
+              "连续多久没有前进就判定卡住（毫秒），默认 2500" );
+        ];
+    with_strip = true;
+    run =
+      (fun args ->
+        let x = need_int args "x" in
+        let y = need_int args "y" in
+        let timeout_ms = get_int args "timeoutMs" 30000 in
+        let stall_ms = get_int args "stallMs" 2500 in
+        let st0 = require_world () in
+        (* 与 go_to 同一套模态界面卫检：菜单/对话开着时角色根本无法移动 *)
+        require_no_menu ~what:"走位" ();
+        let x0, y0 =
+          match st0.player with Some p -> (p.px, p.py) | None -> (0, 0)
+        in
+        let t1 = Unix.gettimeofday () in
+        let res = Game_api.smooth_move ~x ~y ~timeout_ms ~stall_ms () in
+        let dt = Unix.gettimeofday () -. t1 in
+        let getb k d =
+          match Game_state.member k res with Some (`Bool b) -> b | _ -> d
+        in
+        let geti k d =
+          match Game_state.member k res with
+          | Some v -> Game_state.to_int v
+          | None -> d
+        in
+        let gets k =
+          match Game_state.member k res with Some (`String s) -> s | _ -> ""
+        in
+        let px = geti "x" x0 in
+        let py = geti "y" y0 in
+        let steps = geti "steps" 0 in
+        let err = gets "error" in
+        (* 目标格站不住时 mod 会改成最近可站格，并在 reason 里说明 *)
+        let reason = gets "reason" in
+        let note = if reason = "" then "" else "说明：" ^ reason ^ "。" in
+        if not (getb "ok" false) then
+          failwith
+            (Printf.sprintf
+               "原生走位失败：%s（从 (%d,%d) 出发，实际停在 (%d,%d)，已完成 %d 格，耗时 %.1fs）。\
+                若提示「没有这个端点」，说明 JunimoBridge 不是带 /smooth_move 的版本。"
+               (if err = "" then "未知原因" else err) x0 y0 px py steps dt)
+        else if not (getb "arrived" false) then
+          Printf.sprintf
+            "已走到目标附近 (%d,%d)（目标 (%d,%d) 不可站立或被占用；从 (%d,%d) 出发，\
+             原生行走 %d 格，耗时 %.1fs）。%s"
+            px py x y x0 y0 steps dt note
+        else
+          Printf.sprintf "已走到 (%d,%d)（从 (%d,%d) 出发，原生行走 %d 格，耗时 %.1fs）。%s"
+            px py x0 y0 steps dt note);
+  }
+
 let tool_warp =
   {
     name = "warp";
@@ -2920,6 +2992,7 @@ let all : tool list =
     tool_look;
     tool_get_inventory;
     tool_go_to;
+    tool_smooth_move;
     tool_warp;
     tool_face;
     tool_swing_tool;

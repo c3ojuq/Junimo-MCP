@@ -149,6 +149,8 @@ TOOLS_EXPECTED = [
     "festival", "festival_interact", "festival_answer",
     # v3.3 钓鱼 / 小游戏
     "fishing", "cast", "fish", "minigame",
+    # 原生行走（JunimoBridge /smooth_move）
+    "smooth_move",
 ]
 
 
@@ -161,7 +163,7 @@ def run_chain(c):
     )
     tl = c.request("tools/list")
     tools = tl.get("result", {}).get("tools", [])
-    check("tools/list: 共 41 个", len(tools) == 41, f"got {len(tools)}")
+    check("tools/list: 共 42 个", len(tools) == 42, f"got {len(tools)}")
     names = {t["name"] for t in tools}
     for n in TOOLS_EXPECTED:
         check(f"工具存在: {n}", n in names)

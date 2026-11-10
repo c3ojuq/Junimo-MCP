@@ -223,6 +223,26 @@ let walk_to ~location ~x ~y ?(allow_water = false) ?(allow_warp = false) () =
   Http_client.post_json_json (base () ^ "/walk_to")
     (Yojson.Safe.to_string (`Assoc fields))
 
+(* POST /smooth_move：原生行走（逐格注入方向键，保留走路/转向/停步动画）。
+   ⚠️ 与 /walk_to 不同：这是**阻塞**调用，请求返回时人已经停稳（或已失败停下）。
+   ⚠️ 响应恒带 "error" 字段（成功时为空串），所以**不能走 check**——那会给成功也抛
+   Api_error ""。按 walk_to / use_held 的约定：不 check，由调用方读 ok。
+   参数单位：x/y 是**格子坐标**；timeoutMs/stallMs 是**毫秒**。 *)
+let smooth_move ~x ~y ?(timeout_ms = 30000) ?(stall_ms = 2500) () =
+  let timeout_ms = max 1000 (min 180000 timeout_ms) in
+  let stall_ms = max 200 (min 30000 stall_ms) in
+  (* HTTP 等待必须比桥接端自己的预算长，否则客户端先断、角色还在走 *)
+  let max_time = (timeout_ms / 1000) + 10 in
+  Http_client.post_json_json ~max_time (base () ^ "/smooth_move")
+    (Yojson.Safe.to_string
+       (`Assoc
+         [
+           ("x", `Int x);
+           ("y", `Int y);
+           ("timeoutMs", `Int timeout_ms);
+           ("stallMs", `Int stall_ms);
+         ]))
+
 (* ---------- v3.3 钓鱼 / 小游戏 ---------- *)
 
 let fishing () = Http_client.get_json ~max_time:8 (base () ^ "/fishing") |> check

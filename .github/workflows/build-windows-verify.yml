@@ -119,6 +119,9 @@ jobs:
 
       - name: 转储新旧 tools/list（各自真的跑一遍 initialize + tools/list）
         shell: pwsh
+        env:
+         PYTHONUTF8: "1"
+         PYTHONIOENCODING: "utf-8"
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not (Test-Path _build/default/bin/main.exe)) { throw "改动后产物不存在" }

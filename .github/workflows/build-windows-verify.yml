@@ -133,7 +133,13 @@ jobs:
 
       - name: 对比（42 项 / 仅新增 smooth_move / 旧 41 项逐字一致）
         shell: pwsh
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
         run: |
+          $ErrorActionPreference = 'Stop'
+          python test/tools_list_check.py compare --old tools-old.json --new tools-new.json --expect-count 42 --expect-old-count 41 --expect-added smooth_move
+          if ($LASTEXITCODE -ne 0) { throw "tools/list 对比失败" }
           $ErrorActionPreference = 'Stop'
           python test/tools_list_check.py compare --old tools-old.json --new tools-new.json --expect-count 42 --expect-old-count 41 --expect-added smooth_move
           if ($LASTEXITCODE -ne 0) { throw "tools/list 对比失败" }

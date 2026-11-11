@@ -104,17 +104,23 @@ jobs:
 
       - name: 构建基线（同一套编译器与依赖）
         working-directory: baseline
-        run: opam exec -- dune build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          opam exec -- dune build
+          if ($LASTEXITCODE -ne 0) { throw "基线编译失败" }
+          Write-Host "=== baseline build output ==="
+          Get-ChildItem "_build" -Recurse -Filter "main.exe" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
 
       - name: 转储新旧 tools/list（各自真的跑一遍 initialize + tools/list）
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not (Test-Path _build/default/bin/main.exe)) { throw "改动后产物不存在" }
-          if (-not (Test-Path baseline/_build/default/bin/main.exe)) { throw "基线产物不存在" }
+          if (-not (Test-Path _build/default/baseline/bin/main.exe)) { throw "基线产物不存在" }
           python test/tools_list_check.py dump --exe _build/default/bin/main.exe --out tools-new.json
           if ($LASTEXITCODE -ne 0) { throw "转储新版 tools/list 失败" }
-          python test/tools_list_check.py dump --exe baseline/_build/default/bin/main.exe --out tools-old.json
+          python test/tools_list_check.py dump --exe _build/default/baseline/bin/main.exe --out tools-old.json
           if ($LASTEXITCODE -ne 0) { throw "转储基线 tools/list 失败" }
 
       - name: 对比（42 项 / 仅新增 smooth_move / 旧 41 项逐字一致）

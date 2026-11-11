@@ -103,14 +103,17 @@ jobs:
           Write-Host "baseline = $resolved"
 
       - name: 构建基线（同一套编译器与依赖）
-        working-directory: baseline
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          opam exec -- dune build
+          opam exec -- dune build baseline/bin/main.exe
           if ($LASTEXITCODE -ne 0) { throw "基线编译失败" }
-          Write-Host "=== baseline build output ==="
-          Get-ChildItem "_build" -Recurse -Filter "main.exe" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          Write-Host "=== baseline executable ==="
+          if (Test-Path "_build/default/baseline/bin/main.exe") {
+            Get-Item "_build/default/baseline/bin/main.exe" | Select-Object FullName, Length
+          } else {
+            throw "基线 main.exe 未生成"
+          }
 
       - name: 转储新旧 tools/list（各自真的跑一遍 initialize + tools/list）
         shell: pwsh

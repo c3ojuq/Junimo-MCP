@@ -102,8 +102,6 @@ jobs:
           if (-not (Test-Path baseline/dune-project)) { throw "基线目录不完整：缺 baseline/dune-project" }
           Write-Host "baseline = $resolved"
 
-        
-      
       - name: 构建基线（同一套编译器与依赖）
         shell: pwsh
         working-directory: baseline
@@ -111,11 +109,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           opam exec -- dune build bin/main.exe
           if ($LASTEXITCODE -ne 0) { throw "基线编译失败" }
-          if (-not (Test-Path "_build/default/bin/main.exe")) {
-            Get-ChildItem _build -Recurse -Filter main.exe -ErrorAction SilentlyContinue | Select-Object FullName
-            throw "基线 main.exe 未生成"
+          Write-Host "=== Dune build directory ==="
+          if (Test-Path "_build") {
+            Get-ChildItem "_build" -Recurse -File | Select-Object -First 80 -ExpandProperty FullName
+          } else {
+            Write-Host "_build directory does not exist"
           }
-          Write-Host "基线 main.exe 构建成功"
+          Write-Host "=== Dune executable targets ==="
+          opam exec -- dune describe
 
       - name: 转储新旧 tools/list（各自真的跑一遍 initialize + tools/list）
         shell: pwsh

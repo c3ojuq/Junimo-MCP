@@ -11,6 +11,8 @@
 # - dune 在所有平台都输出 _build/default/bin/main.exe（ci.yml:85 注释、test/mock_smoke.py:33）
 # - initialize / tools/list 是纯本地逻辑（lib/mcp.ml:10-26、65；lib/intents.ml:2969-2978），
 #   不需要游戏、不需要 JunimoBridge、不需要 mock
+
+
 name: build-windows-verify
 
 on:
@@ -104,29 +106,26 @@ jobs:
 
       - name: 构建基线（同一套编译器与依赖）
         shell: pwsh
-        working-directory: baseline
         run: |
           $ErrorActionPreference = 'Stop'
-          opam exec -- dune build bin/main.exe
+          opam exec -- dune build baseline/bin/main.exe
           if ($LASTEXITCODE -ne 0) { throw "基线编译失败" }
-          Write-Host "=== Dune build directory ==="
-          if (Test-Path "_build") {
-            Get-ChildItem "_build" -Recurse -File | Select-Object -First 80 -ExpandProperty FullName
+          Write-Host "=== baseline executable ==="
+          if (Test-Path "_build/default/baseline/bin/main.exe") {
+            Get-Item "_build/default/baseline/bin/main.exe" | Select-Object FullName, Length
           } else {
-            Write-Host "_build directory does not exist"
+            throw "基线 main.exe 未生成"
           }
-          Write-Host "=== Dune executable targets ==="
-          opam exec -- dune describe
 
       - name: 转储新旧 tools/list（各自真的跑一遍 initialize + tools/list）
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not (Test-Path _build/default/bin/main.exe)) { throw "改动后产物不存在" }
-          if (-not (Test-Path baseline/_build/default/bin/main.exe)) { throw "基线产物不存在" }
+          if (-not (Test-Path _build/default/baseline/bin/main.exe)) { throw "基线产物不存在" }
           python test/tools_list_check.py dump --exe _build/default/bin/main.exe --out tools-new.json
           if ($LASTEXITCODE -ne 0) { throw "转储新版 tools/list 失败" }
-          python test/tools_list_check.py dump --exe baseline/_build/default/bin/main.exe --out tools-old.json
+          python test/tools_list_check.py dump --exe _build/default/baseline/bin/main.exe --out tools-old.json
           if ($LASTEXITCODE -ne 0) { throw "转储基线 tools/list 失败" }
 
       - name: 对比（42 项 / 仅新增 smooth_move / 旧 41 项逐字一致）
